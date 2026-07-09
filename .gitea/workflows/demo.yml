@@ -1,20 +1,18 @@
 name: Gitea CI/CD Demo
 
 on:
-  push:
-    branches: [ "main" ]
+    push:
+        branches: ['main']
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
+    build-and-test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out repository code
+              uses: actions/checkout@v4
+              with:
+                  # 👇 แก้ทางเชื่อมโดยตรง: บังคับให้วิ่งไปหาพอร์ต 3333 ของเครื่อง Host หลัก
+                  server_url: 'http://gitea.b-bsw.com'
 
-      - name: Run a one-line script
-        run: echo "Hello, Gitea Actions! กำลังทดสอบระบบ CI/CD"
-
-      - name: Run a multi-line script
-        run: |
-          echo "ลองเช็คเวอร์ชันของเครื่องรัน:"
-          node -v
+            - name: Run a one-line script
+              run: echo "Hello, Gitea Actions! ดึงโค้ดสำเร็จแล้ว"
