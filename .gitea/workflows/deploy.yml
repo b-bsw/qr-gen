@@ -1,0 +1,29 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t qr-app:latest .
+
+      - name: Stop old container
+        run: |
+          docker rm -f qr-app || true
+
+      - name: Run container
+        run: |
+          docker run -d \
+            --name qr-app \
+            --restart unless-stopped \
+            -p 3002:3002 \
+            qr-app:latest
