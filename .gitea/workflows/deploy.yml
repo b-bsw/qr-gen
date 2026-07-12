@@ -15,8 +15,10 @@ jobs:
             - name: Setup Bun
               uses: oven-sh/setup-bun@v2
 
-            - name: Check node version
-              uses: node -v
+            - name: Check versions
+              run: |
+                node -v
+                bun -v
 
             - name: Install dependencies
               run: bun install --frozen-lockfile
