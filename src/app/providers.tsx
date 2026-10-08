@@ -1,6 +1,13 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+} from 'react'
 
 type Theme = 'light' | 'dark'
 
@@ -15,7 +22,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const [theme, setThemeState] = useState<Theme>('light')
 
     useEffect(() => {
-        const storedTheme = localStorage.getItem('qr-theme')
+        let storedTheme: string | null = null
+        try {
+            storedTheme = localStorage.getItem('qr-theme')
+        } catch {
+            // Theme controls still work when browser storage is unavailable.
+        }
         if (storedTheme === 'light' || storedTheme === 'dark') {
             setThemeState(storedTheme)
             document.documentElement.classList.toggle(
@@ -28,18 +40,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
         document.documentElement.classList.remove('dark')
     }, [])
 
-    const setTheme = (nextTheme: Theme) => {
+    const setTheme = useCallback((nextTheme: Theme) => {
         setThemeState(nextTheme)
-        localStorage.setItem('qr-theme', nextTheme)
         document.documentElement.classList.toggle('dark', nextTheme === 'dark')
-    }
+        try {
+            localStorage.setItem('qr-theme', nextTheme)
+        } catch {
+            // Persistence is optional; applying the selected theme is not.
+        }
+    }, [])
 
     const value = useMemo(
         () => ({
             theme,
             setTheme,
         }),
-        [theme]
+        [theme, setTheme]
     )
 
     return (

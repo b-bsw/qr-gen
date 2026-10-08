@@ -1,81 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server'
 import QRCode from 'qrcode'
 import sharp from 'sharp'
+import { parseQrQuery, rasterQrOptions } from '@/lib/qr'
 
-const allowedFormats = new Set(['png', 'jpg', 'svg'])
+export const runtime = 'nodejs'
 
 export async function GET(request: NextRequest) {
-    const searchParams = request.nextUrl.searchParams
-    const text = searchParams.get('text')
-    const format = searchParams.get('format') ?? 'png'
-
-    const fg = searchParams.get('fg') ?? '#000000'
-    const bg = searchParams.get('bg') ?? '#ffffff'
-    const quality: number = Number(searchParams.get('quality')) ?? 512
-
-    if (!text) {
+    let query: ReturnType<typeof parseQrQuery>
+    try {
+        query = parseQrQuery(request.nextUrl.searchParams)
+    } catch (error) {
         return NextResponse.json(
-            { error: 'Missing text query parameter' },
+            {
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : 'Invalid QR parameters',
+            },
             { status: 400 }
         )
     }
-
-    if (!allowedFormats.has(format)) {
+    const { text, format, options } = query
+    const headers = {
+        'Content-Type':
+            format === 'svg'
+                ? 'image/svg+xml; charset=utf-8'
+                : format === 'jpg'
+                  ? 'image/jpeg'
+                  : 'image/png',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'no-store',
+    }
+    try {
+        if (format === 'svg') {
+            return new NextResponse(
+                await QRCode.toString(text, { ...options, type: 'svg' }),
+                { headers }
+            )
+        }
+        const png = await QRCode.toBuffer(text, {
+            ...rasterQrOptions(options),
+            type: 'png',
+        })
+        // JPEG has no alpha channel. Match the white canvas used by downloads.
+        const buffer =
+            format === 'jpg'
+                ? await sharp(png)
+                      .flatten({ background: '#ffffff' })
+                      .jpeg({ quality: 90 })
+                      .toBuffer()
+                : png
+        return new NextResponse(new Uint8Array(buffer), { headers })
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            /amount of data is too big/i.test(error.message)
+        ) {
+            return NextResponse.json(
+                { error: 'Text is too long for a QR code' },
+                { status: 400 }
+            )
+        }
+        console.error('QR generation failed:', error)
         return NextResponse.json(
-            { error: 'Invalid format query parameter' },
-            { status: 400 }
+            { error: 'Unable to generate QR code' },
+            { status: 500 }
         )
     }
-
-    const qrOptions = {
-        width: quality,
-        margin: 2,
-        color: {
-            dark: fg,
-            light: bg,
-        },
-    }
-
-    if (format === 'svg') {
-        const svg = await QRCode.toString(text, {
-            type: 'svg',
-            ...qrOptions,
-        })
-
-        return new NextResponse(svg, {
-            headers: {
-                'Content-Type': 'image/svg+xml; charset=utf-8',
-                'Content-Disposition': 'inline',
-                'Cache-Control': 'no-store',
-            },
-        })
-    }
-
-    const pngBuffer = await QRCode.toBuffer(text, {
-        type: 'png',
-        ...qrOptions,
-    })
-
-    if (format === 'jpg') {
-        const jpegBuffer = await sharp(pngBuffer)
-            .flatten({ background: bg })
-            .jpeg({ quality: 90 })
-            .toBuffer()
-
-        return new NextResponse(new Uint8Array(jpegBuffer), {
-            headers: {
-                'Content-Type': 'image/jpeg',
-                'Content-Disposition': 'inline',
-                'Cache-Control': 'no-store',
-            },
-        })
-    }
-
-    return new NextResponse(new Uint8Array(pngBuffer), {
-        headers: {
-            'Content-Type': 'image/png',
-            'Content-Disposition': 'inline',
-            'Cache-Control': 'no-store',
-        },
-    })
 }

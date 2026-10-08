@@ -6,7 +6,6 @@ import {
     ButtonGroup,
     Card,
     InputGroup,
-    Key,
     ListBox,
     Select,
     TextField,
@@ -27,6 +26,15 @@ import {
 } from '@heroui/react'
 import { Check, Copy, Moon, Sun } from 'lucide-react'
 import { useTheme } from './providers'
+import {
+    imageLink,
+    parseWebsiteInput,
+    qrOptions,
+    rasterQrOptions,
+    websiteText,
+    type ErrorCorrectionLevel,
+    type ImageFormat,
+} from '@/lib/qr'
 
 const format = [
     {
@@ -46,13 +54,11 @@ const format = [
     },
 ]
 
-type ErrorCorrectionLevel = 'low' | 'high' | 'medium' | 'quartile'
-
 const errCorrLvl = [
     { id: 1, level: 'low' },
     { id: 2, level: 'medium' },
-    { id: 3, level: 'high' },
-    { id: 4, level: 'quartile' },
+    { id: 3, level: 'quartile' },
+    { id: 4, level: 'high' },
 ]
 
 const qualityLevel = [
@@ -65,11 +71,16 @@ const qualityLevel = [
 const placeholderURL = 'https://qr.b-bsw.com'
 
 export default function Page() {
-    const [text, setText] = useState<string>(placeholderURL)
-    const [qrImage, setQrImage] = useState<string | null>(null)
-    const [qrSvg, setQrSvg] = useState<string | null>(null)
-    const [isDisable, setIsDisable] = useState<boolean>(true)
-    const [isCheckCopy, setIsCheckCopy] = useState<boolean>(false)
+    const [website, setWebsite] = useState(
+        placeholderURL.slice('https://'.length)
+    )
+    const [generated, setGenerated] = useState<{
+        key: string
+        image: string | null
+        svg: string | null
+        error: string | null
+    } | null>(null)
+    const [copiedText, setCopiedText] = useState<string | null>(null)
     const [colorPickerFg, setColorPickerFg] = useState<Color>(
         parseColor('#000000')
     )
@@ -77,114 +88,126 @@ export default function Page() {
         parseColor('#FFFFFF')
     )
     const [level, setLevel] = useState<ErrorCorrectionLevel>('medium')
-    const [selectedFormat, setSelectedFormat] = useState<Key>('png')
+    const [selectedFormat, setSelectedFormat] = useState<ImageFormat>('png')
     const [selectQuality, setSelectQuality] = useState<number>(512)
     const [swapHttps, setSwapHttps] = useState<'https' | 'http'>('https')
 
     const { theme, setTheme } = useTheme()
+    const text = websiteText(website, swapHttps)
+    const isCheckCopy = Boolean(text && copiedText === text)
+    const fg = colorPickerFg.toString('hexa')
+    const bg = colorPickerBg.toString('hexa')
+    const generationKey = JSON.stringify([text, fg, bg, level, selectQuality])
+    const current = generated?.key === generationKey ? generated : null
+    const qrImage = current?.image ?? null
+    const qrSvg = current?.svg ?? null
+    const generationError = current?.error ?? null
+    const isReady = Boolean(text && qrImage && qrSvg)
 
     useEffect(() => {
-        if (!text) {
-            setQrImage(null)
-            setQrSvg(null)
-            setIsDisable(true)
-            return
-        } else {
-            setIsDisable(false)
-            setIsCheckCopy(false)
-        }
-
-        // PNG
-        QRCode.toDataURL(text, {
-            width: selectQuality,
-            margin: 2,
-            color: {
-                dark: colorPickerFg.toString('hexa'),
-                light: colorPickerBg.toString('hexa'),
-            },
-            errorCorrectionLevel: level,
-        })
-            .then((url) => setQrImage(url))
-            .catch(console.error)
-
-        // SVG
-        QRCode.toString(text, {
-            type: 'svg',
-            width: selectQuality,
-            margin: 2,
-            color: {
-                dark: colorPickerFg.toString('hexa'),
-                light: colorPickerBg.toString('hexa'),
-            },
-            errorCorrectionLevel: level,
-        })
-            .then((svg) => setQrSvg(svg))
-            .catch(console.error)
-    }, [
-        text,
-        selectedFormat,
-        colorPickerFg,
-        colorPickerBg,
-        level,
-        selectQuality,
-    ])
-
-    const handleDownload = () => {
         if (!text) return
-
-        if (selectedFormat === 'svg') {
-            if (!qrSvg) return
-            const blob = new Blob([qrSvg], { type: 'image/svg+xml' })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = 'qrcode.svg'
-            a.click()
-            URL.revokeObjectURL(url)
-        } else if (selectedFormat === 'png' || selectedFormat === 'jpg') {
-            if (!qrImage) return
-            const img = new Image()
-            img.src = qrImage
-            img.onload = () => {
-                const canvas = document.createElement('canvas')
-                canvas.width = img.width
-                canvas.height = img.height
-                const ctx = canvas.getContext('2d')
-                if (!ctx) return
-
-                if (selectedFormat === 'jpg') {
-                    ctx.fillStyle = '#ffffff'
-                    ctx.fillRect(0, 0, canvas.width, canvas.height)
-                }
-                ctx.drawImage(img, 0, 0)
-                const url = canvas.toDataURL(
-                    selectedFormat === 'png' ? 'image/png' : 'image/jpeg',
-                    0.9
-                )
-                const a = document.createElement('a')
-                a.href = url
-                a.download = `qrcode.${selectedFormat}`
-                a.click()
+        let cancelled = false
+        const options = qrOptions(selectQuality, fg, bg, level)
+        async function generate() {
+            try {
+                const [image, svg] = await Promise.all([
+                    QRCode.toDataURL(text, rasterQrOptions(options)),
+                    QRCode.toString(text, { ...options, type: 'svg' }),
+                ])
+                if (!cancelled)
+                    setGenerated({
+                        key: generationKey,
+                        image,
+                        svg,
+                        error: null,
+                    })
+            } catch {
+                if (!cancelled)
+                    setGenerated({
+                        key: generationKey,
+                        image: null,
+                        svg: null,
+                        error: 'Unable to generate QR code. Try shorter text.',
+                    })
             }
         }
+        void generate()
+        return () => {
+            cancelled = true
+        }
+    }, [text, fg, bg, level, selectQuality, generationKey])
+
+    const saveImage = (url: string, format: ImageFormat) => {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `qrcode.${format}`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
     }
 
-    const copyLink = () => {
+    const handleDownload = async () => {
+        if (!isReady || !qrImage || !qrSvg) return
+        try {
+            if (selectedFormat === 'svg') {
+                const url = URL.createObjectURL(
+                    new Blob([qrSvg], { type: 'image/svg+xml' })
+                )
+                saveImage(url, 'svg')
+                // Allow the browser to start reading the blob before releasing it.
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+            } else if (selectedFormat === 'png') {
+                saveImage(qrImage, 'png')
+            } else {
+                const img = new Image()
+                img.src = qrImage
+                await img.decode()
+                const canvas = document.createElement('canvas')
+                canvas.width = img.naturalWidth
+                canvas.height = img.naturalHeight
+                const ctx = canvas.getContext('2d')
+                if (!ctx) throw new Error('Canvas unavailable')
+                ctx.fillStyle = '#ffffff'
+                ctx.fillRect(0, 0, canvas.width, canvas.height)
+                ctx.drawImage(img, 0, 0)
+                saveImage(canvas.toDataURL('image/jpeg', 0.9), 'jpg')
+            }
+        } catch {
+            toast.danger('Unable to download QR code')
+        }
+    }
+
+    const copyLink = async () => {
+        if (!isReady) return
+        try {
+            await navigator.clipboard.writeText(
+                imageLink(
+                    window.location.origin,
+                    text,
+                    selectedFormat,
+                    qrOptions(selectQuality, fg, bg, level)
+                )
+            )
+            toast.info('Copy Success')
+        } catch {
+            toast.danger('Unable to copy link')
+        }
+    }
+
+    const copyText = async () => {
         if (!text) return
-
-        const fg = colorPickerFg.toString('hexa')
-        const bg = colorPickerBg.toString('hexa')
-        // console.log(fg)
-
-        const url = `${window.location.origin}/qr?text=${encodeURIComponent(text)}&format=${selectedFormat}&fg=${encodeURIComponent(fg)}&bg=${encodeURIComponent(bg)}&quality=${selectQuality}`
-        navigator.clipboard
-            .writeText(url)
-            .then(() => toast.info('Copy Success'))
-            .catch(console.error)
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopiedText(text)
+        } catch {
+            toast.danger('Unable to copy URL')
+        }
     }
 
-    const handleSetText = (msg: string) => {
-        setText(msg.trim())
+    const handleSetText = (value: string) => {
+        const parsed = parseWebsiteInput(value, swapHttps)
+        setWebsite(parsed.value)
+        setSwapHttps(parsed.protocol)
     }
 
     const colorPicker = [
@@ -207,8 +230,9 @@ export default function Page() {
             <header className="absolute top-0 z-1 flex w-full flex-row-reverse pt-4 pr-4">
                 <Switch
                     size="lg"
-                    onChange={() =>
-                        setTheme(theme === 'dark' ? 'light' : 'dark')
+                    aria-label="Dark mode"
+                    onChange={(selected) =>
+                        setTheme(selected ? 'dark' : 'light')
                     }
                     isSelected={theme === 'dark'}
                 >
@@ -250,6 +274,13 @@ export default function Page() {
                                             alt="QR Code"
                                             className="h-full w-full object-contain sm:rounded-xl sm:drop-shadow-sm"
                                         />
+                                    ) : generationError ? (
+                                        <p
+                                            role="alert"
+                                            className="text-danger px-4 text-center"
+                                        >
+                                            {generationError}
+                                        </p>
                                     ) : (
                                         <Spinner color="current" />
                                     )}
@@ -322,40 +353,28 @@ export default function Page() {
                         <div className="w-full">
                             <TextField
                                 className="w-full"
-                                defaultValue={placeholderURL.split('://')[1]}
+                                value={website}
+                                onChange={handleSetText}
                                 name="website"
                                 // variant="secondary"
                                 aria-label="input url"
                             >
-                                <InputGroup
-                                    onClick={() => setIsCheckCopy(false)}
-                                >
+                                <InputGroup>
                                     <Tooltip delay={500}>
-                                        <Tooltip.Trigger>
-                                            <InputGroup.Prefix
-                                                className="cursor-pointer touch-none"
-                                                onClick={() => {
-                                                    setSwapHttps(
-                                                        swapHttps === 'http'
-                                                            ? 'https'
-                                                            : 'http'
-                                                    )
-                                                    handleSetText(
-                                                        swapHttps === 'http'
-                                                            ? 'https://' +
-                                                                  text.split(
-                                                                      '://'
-                                                                  )[1]
-                                                            : 'http://' +
-                                                                  text.split(
-                                                                      '://'
-                                                                  )[1]
-                                                    )
-                                                }}
-                                            >
-                                                {swapHttps}://
-                                            </InputGroup.Prefix>
-                                        </Tooltip.Trigger>
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            aria-label={`Switch to ${swapHttps === 'http' ? 'https' : 'http'}`}
+                                            onPress={() => {
+                                                setSwapHttps(
+                                                    swapHttps === 'http'
+                                                        ? 'https'
+                                                        : 'http'
+                                                )
+                                            }}
+                                        >
+                                            {swapHttps}://
+                                        </Button>
                                         <Tooltip.Content
                                             className={
                                                 'border px-3 py-1.5 font-semibold'
@@ -374,29 +393,15 @@ export default function Page() {
                                         </Tooltip.Content>
                                     </Tooltip>
 
-                                    <InputGroup.Input
-                                        value={
-                                            text.split('://')[1]
-                                                ? text.split('://')[2]
-                                                : ''
-                                        }
-                                        onChange={(e) =>
-                                            handleSetText(
-                                                (
-                                                    `${swapHttps}://` +
-                                                    e.currentTarget.value
-                                                ).trim()
-                                            )
-                                        }
-                                        // className="max-w-70"
-                                    />
+                                    <InputGroup.Input />
 
-                                    {text.split('://')[1] && (
+                                    {website && (
                                         <InputGroup.Suffix className="pr-0">
                                             <CloseButton
+                                                aria-label="Clear URL"
                                                 className="scale-75"
-                                                onClick={() =>
-                                                    handleSetText('https://')
+                                                onPress={() =>
+                                                    handleSetText('')
                                                 }
                                             />
                                         </InputGroup.Suffix>
@@ -407,13 +412,8 @@ export default function Page() {
                                             aria-label="Copy"
                                             size="sm"
                                             variant="ghost"
-                                            isDisabled={isCheckCopy}
-                                            onPress={() => {
-                                                navigator.clipboard.writeText(
-                                                    text
-                                                )
-                                                setIsCheckCopy(true)
-                                            }}
+                                            isDisabled={!text || isCheckCopy}
+                                            onPress={copyText}
                                         >
                                             {isCheckCopy ? <Check /> : <Copy />}
                                         </Button>
@@ -429,10 +429,10 @@ export default function Page() {
                                     className="w-full"
                                     placeholder="Select one"
                                     // variant="secondary"
-                                    defaultValue={'png'}
+                                    value={selectedFormat}
                                     aria-label="format"
                                     onChange={(e) =>
-                                        setSelectedFormat(e as Key)
+                                        setSelectedFormat(e as ImageFormat)
                                     }
                                 >
                                     <Label className="w-full text-center text-xs text-black dark:text-white">
@@ -465,7 +465,7 @@ export default function Page() {
                                     className="w-full"
                                     placeholder="Select one"
                                     // variant="secondary"
-                                    defaultValue={level}
+                                    value={level}
                                     aria-label="level"
                                     onChange={(e) =>
                                         setLevel(e as ErrorCorrectionLevel)
@@ -501,10 +501,10 @@ export default function Page() {
                                     className="w-full"
                                     placeholder="Select one"
                                     // variant="secondary"
-                                    defaultValue={512}
+                                    value={selectQuality}
                                     aria-label="quality"
                                     onChange={(e) =>
-                                        setSelectQuality(e as number)
+                                        setSelectQuality(Number(e))
                                     }
                                 >
                                     <Label className="w-full text-center text-xs text-black dark:text-white">
@@ -532,7 +532,7 @@ export default function Page() {
                                     </Select.Popover>
                                 </Select>
                             </div>
-                            <div className="ustify-center flex w-full gap-2">
+                            <div className="flex w-full justify-center gap-2">
                                 <ButtonGroup
                                     variant="tertiary"
                                     fullWidth
@@ -540,13 +540,13 @@ export default function Page() {
                                 >
                                     <Button
                                         onPress={handleDownload}
-                                        isDisabled={!qrImage || !qrSvg}
+                                        isDisabled={!isReady}
                                     >
                                         Download
                                     </Button>
                                     <Button
-                                        onClick={copyLink}
-                                        isDisabled={isDisable}
+                                        onPress={copyLink}
+                                        isDisabled={!isReady}
                                     >
                                         <ButtonGroup.Separator />
                                         Copy QR Code Image Link
